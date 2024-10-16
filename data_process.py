@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 plt.style.use(['science', 'nature'])
 
 # simulation parameters
-start, end = 240,247
+start, end = 240,268
 n_timesteps = (end-start)*96
 n_itr = 15 # one-minute control resolution
 n_pv = 48 # 50% nodes have a pv
