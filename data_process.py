@@ -9,6 +9,7 @@ plt.style.use(['science', 'nature'])
 start, end = 240,268
 n_timesteps = (end-start)*96
 n_itr = 15 # one-minute control resolution
+itr_length = 0.25 / n_itr # in hour
 n_pv = 48 # 50% nodes have a pv
 n_storage = 19 # 20% nodes have a battery
 list_bus_visual = [55,66,59,70]
