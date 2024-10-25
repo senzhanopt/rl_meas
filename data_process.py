@@ -15,6 +15,8 @@ n_storage = 19 # 20% nodes have a battery
 list_bus_visual = [55,66,59,70]
 soc_min, soc_max, soc_init = 0.2, 0.8, 0.5
 eta_ch, eta_dis = 0.95, 0.95
+v_upp = 1.05
+v_low = 0.95
 
 # read pp net object from simbench
 net = sb.get_simbench_net('1-LV-rural2--2-no_sw')
@@ -27,6 +29,7 @@ n_bus = len(net.bus) # 97 bus
 S_pv = net.sgen.sn_mva.to_numpy() * 1E3
 S_storage = net.storage.sn_mva.to_numpy() * 1E3
 E_storage = net.storage.max_e_mwh.to_numpy() * 1E3
+S_trafo = net.trafo.sn_mva[0] * 1E3
 
 # read load profiles
 prof = sb.get_absolute_values(net, 1)
