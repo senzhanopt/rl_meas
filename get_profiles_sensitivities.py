@@ -8,7 +8,7 @@ for t in range(96*(end-start)):
     net.load.q_mvar = load_q[t,:] * 1E-3
     net.sgen.p_mw = sgen_p[t,:] * 1E-3
     net.sgen.q_mvar = 0.0
-    net.storage.p_mw = storage_p[t,:] * 1E-3
+    net.storage.p_mw = 0.0 # storage_p[t,:] * 1E-3
     net.storage.q_mvar = 0.0
     pp.runpp(net)
     vm[t,:] = net.res_bus.vm_pu.to_numpy()[1:]

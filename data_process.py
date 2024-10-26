@@ -6,14 +6,14 @@ import matplotlib.pyplot as plt
 plt.style.use(['science', 'nature'])
 
 # simulation parameters
-start, end = 240,268
+start, end = 224, 252
 n_timesteps = (end-start)*96
 n_itr = 15 # one-minute control resolution
 itr_length = 0.25 / n_itr # in hour
-n_pv = 48 # 50% nodes have a pv
-n_storage = 19 # 20% nodes have a battery
+n_pv = 72
+n_storage = 60
 list_bus_visual = [55,66,59,70]
-soc_min, soc_max, soc_init = 0.2, 0.8, 0.5
+soc_min, soc_max, soc_init = 0.2, 0.8, 0.2
 eta_ch, eta_dis = 0.95, 0.95
 v_upp = 1.05
 v_low = 0.95
@@ -22,6 +22,7 @@ v_low = 0.95
 net = sb.get_simbench_net('1-LV-rural2--2-no_sw')
 net.ext_grid.vm_pu = 1.0
 net.trafo.tap_pos = 0
+net.trafo.sn_mva *= 1.6 # increase the trafo capacity from 250 to 400 kVA
 net.sgen = pd.read_excel('sgen.xlsx', index_col = 0).iloc[0:n_pv,:]
 net.storage = pd.read_excel('storage.xlsx', index_col = 0).iloc[0:n_storage,:]
 #pp.plotting.to_html(net, 'grid.html')
@@ -29,7 +30,7 @@ n_bus = len(net.bus) # 97 bus
 S_pv = net.sgen.sn_mva.to_numpy() * 1E3
 S_storage = net.storage.sn_mva.to_numpy() * 1E3
 E_storage = net.storage.max_e_mwh.to_numpy() * 1E3
-S_trafo = net.trafo.sn_mva[0] * 1E3
+S_trafo = net.trafo.sn_mva[0] * 1E3 
 
 # read load profiles
 prof = sb.get_absolute_values(net, 1)

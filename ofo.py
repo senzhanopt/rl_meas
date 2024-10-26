@@ -4,12 +4,14 @@ from tqdm import tqdm
 import copy
 
 ## parameters
-beta = 0.0
-rho = 5E0
-alpha = 0.1
+beta = 1e5
+rho = 5E2
+alpha = 0.5
 xi = 0.1
-n_itr = 100
-start_ofo, end_ofo = 48+96,49+96
+epsilon = 1E-2
+n_itr = 15
+start_ofo, end_ofo = 21*96, 28*96
+pv_control = True
 n_timesteps = end_ofo-start_ofo
 load_p = load_p[start_ofo:end_ofo,:]
 load_q = load_q[start_ofo:end_ofo,:]
@@ -118,6 +120,10 @@ for itr in tqdm(range(n_timesteps * n_itr)):
         load_p_current = load_p[itr//n_itr,:]
         load_q_current = load_q[itr//n_itr,:]
         sgen_p_current = sgen_p[itr//n_itr,:]
+        
+    if not pv_control:
+        p_pv = copy.deepcopy(sgen_p_current)
+        q_pv = np.zeros(n_pv)
     
     # save iterates
     mat_p_storage[itr,:] = p_storage
@@ -136,7 +142,7 @@ for itr in tqdm(range(n_timesteps * n_itr)):
     net.storage.q_mvar = q_storage * 1E-3
     pp.runpp(net)
     v = net.res_bus.vm_pu.to_numpy()[1:]
-    loading = net.res_trafo.loading_percent[0]
+    loading = net.res_trafo.loading_percent[0]/100.0
     P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
     Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
     pf_trafo = P_trafo / np.sqrt(P_trafo**2+Q_trafo**2)
@@ -154,15 +160,16 @@ for itr in tqdm(range(n_timesteps * n_itr)):
     pi *= (pi >= 0)
     
     # primal gradient descent
-    grad_p_pv = p_pv - sgen_p_current + mat_R_pv.T @ (lambdas - gamma) - pi*pf_trafo/S_trafo*np.ones(n_pv)
-    grad_q_pv = xi * q_pv + mat_X_pv.T @ (lambdas - gamma) - pi*rpf_trafo/S_trafo*np.ones(n_pv)
-    p_pv -= alpha * grad_p_pv
-    q_pv -= alpha * grad_q_pv
-    for i in range(n_pv):
-        p_pv[i], q_pv[i] = projection_pv(sgen_p_current[i], S_pv[i], p_pv[i], q_pv[i])
+    if pv_control:
+        grad_p_pv = p_pv - sgen_p_current + mat_R_pv.T @ (lambdas - gamma) - pi*pf_trafo/S_trafo*np.ones(n_pv)
+        grad_q_pv = xi * q_pv + mat_X_pv.T @ (lambdas - gamma) - pi*rpf_trafo/S_trafo*np.ones(n_pv)
+        p_pv -= alpha * grad_p_pv
+        q_pv -= alpha * grad_q_pv
+        for i in range(n_pv):
+            p_pv[i], q_pv[i] = projection_pv(sgen_p_current[i], S_pv[i], p_pv[i], q_pv[i])
     
-    grad_p_storage = p_storage + mat_R_storage.T @ (lambdas - gamma) + pi*pf_trafo/S_trafo*np.ones(n_storage)
-    grad_q_storage = xi*q_storage + mat_X_storage.T @ (lambdas - gamma) + pi*rpf_trafo/S_trafo*np.ones(n_storage)
+    grad_p_storage = epsilon * net.storage.max_e_mwh.to_numpy()*1E3 * (soc-soc_init) + mat_R_storage.T @ (lambdas - gamma) + pi*pf_trafo/S_trafo*np.ones(n_storage)
+    grad_q_storage = xi * q_storage + mat_X_storage.T @ (lambdas - gamma) + pi*rpf_trafo/S_trafo*np.ones(n_storage)
     p_storage -= alpha * grad_p_storage
     q_storage -= alpha * grad_q_storage
     Pmax = (soc_max - soc)*E_storage/itr_length/eta_ch
@@ -175,13 +182,18 @@ for itr in tqdm(range(n_timesteps * n_itr)):
 
 # visualization
 for b in list_bus_visual:
-    plt.plot(mat_v[:,b-1], label = f'bus {b}')
+    plt.plot(mat_v[:1440,b-1], label = f'bus {b}')
 plt.legend()
 plt.show()    
 
-plt.plot(mat_loading, label = "trafo")
+plt.plot(mat_loading[:1440], label = "trafo")
 plt.legend()
 plt.show()
+
+for i in range(4):
+    plt.plot(mat_p_pv[:,i], label = f'pv {b}')
+plt.legend()
+plt.show()    
 
 for i in range(4):
     plt.plot(mat_p_storage[:,i], label = f'storage {b}')
@@ -189,7 +201,10 @@ plt.legend()
 plt.show()    
 
 
-
+for i in range(4):
+    plt.plot(mat_soc_storage[:1440,i], label = f'storage {b}')
+plt.legend()
+plt.show()
 
 
 
