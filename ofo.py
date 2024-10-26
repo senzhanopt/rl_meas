@@ -5,13 +5,13 @@ import copy
 
 ## parameters
 beta = 1e5
-rho = 5E2
+rho = 1e4
 alpha = 0.5
 xi = 0.1
 epsilon = 1E-2
 n_itr = 15
 start_ofo, end_ofo = 21*96, 28*96
-pv_control = True
+pv_control = False
 n_timesteps = end_ofo-start_ofo
 load_p = load_p[start_ofo:end_ofo,:]
 load_q = load_q[start_ofo:end_ofo,:]
@@ -169,7 +169,7 @@ for itr in tqdm(range(n_timesteps * n_itr)):
             p_pv[i], q_pv[i] = projection_pv(sgen_p_current[i], S_pv[i], p_pv[i], q_pv[i])
     
     grad_p_storage = epsilon * net.storage.max_e_mwh.to_numpy()*1E3 * (soc-soc_init) + mat_R_storage.T @ (lambdas - gamma) + pi*pf_trafo/S_trafo*np.ones(n_storage)
-    grad_q_storage = xi * q_storage + mat_X_storage.T @ (lambdas - gamma) + pi*rpf_trafo/S_trafo*np.ones(n_storage)
+    grad_q_storage = q_storage + mat_X_storage.T @ (lambdas - gamma) + pi*rpf_trafo/S_trafo*np.ones(n_storage)
     p_storage -= alpha * grad_p_storage
     q_storage -= alpha * grad_q_storage
     Pmax = (soc_max - soc)*E_storage/itr_length/eta_ch
