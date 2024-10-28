@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 import copy
 
+
 ## parameters
 beta = 1e5
 rho = 1e4
