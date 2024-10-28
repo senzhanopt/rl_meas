@@ -12,13 +12,18 @@ epsilon = 1E-2
 n_itr = 15
 start_ofo, end_ofo = 21*96, 28*96
 pv_control = False
+lr = True
 n_timesteps = end_ofo-start_ofo
 load_p = load_p[start_ofo:end_ofo,:]
 load_q = load_q[start_ofo:end_ofo,:]
 sgen_p = sgen_p[start_ofo:end_ofo,:]
 
-mat_R_storage = pd.read_csv('mat_R_storage.csv', index_col = 0).to_numpy()
-mat_X_storage = pd.read_csv('mat_X_storage.csv', index_col = 0).to_numpy()
+if lr:
+    mat_R_storage = pd.read_csv('mat_R_storage_lr.csv', index_col = 0).to_numpy()
+    mat_X_storage = pd.read_csv('mat_X_storage_lr.csv', index_col = 0).to_numpy()
+else:
+    mat_R_storage = pd.read_csv('mat_R_storage.csv', index_col = 0).to_numpy()
+    mat_X_storage = pd.read_csv('mat_X_storage.csv', index_col = 0).to_numpy()
 mat_R_pv = pd.read_csv('mat_R_pv.csv', index_col = 0).to_numpy()
 mat_X_pv = pd.read_csv('mat_X_pv.csv', index_col = 0).to_numpy()
 
