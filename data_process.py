@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 plt.style.use(['science', 'nature'])
+import copy
+from power_grid_model_io.converters import PandaPowerConverter
+from power_grid_model import ComponentType, DatasetType, initialize_array, PowerGridModel
 
 # simulation parameters
 start, end = 224, 252
@@ -27,6 +30,8 @@ net.sgen = pd.read_excel('sgen.xlsx', index_col = 0).iloc[0:n_pv,:]
 net.storage = pd.read_excel('storage.xlsx', index_col = 0).iloc[0:n_storage,:]
 #pp.plotting.to_html(net, 'grid.html')
 n_bus = len(net.bus) # 97 bus
+n_load = len(net.load)
+n_load_storage = n_storage + n_load
 S_pv = net.sgen.sn_mva.to_numpy() * 1E3
 S_storage = net.storage.sn_mva.to_numpy() * 1E3
 E_storage = net.storage.max_e_mwh.to_numpy() * 1E3
@@ -41,5 +46,30 @@ load_q = prof[('load', 'q_mvar')].iloc[start*96:end*96,:].to_numpy() * 1E3
 sgen_p = sb.get_absolute_profiles_from_relative_profiles(net, 'sgen', 'sn_mva').iloc[start*96:end*96,:].to_numpy() * 1E3
 storage_p = sb.get_absolute_profiles_from_relative_profiles(net, 'storage', 'sn_mva').iloc[start*96:end*96,:].to_numpy() * 1E3
 
+# use pgm
+net_pgm = copy.deepcopy(net)
+net_pgm["storage"] = net_pgm["storage"].iloc[:0] #DELATE STORAGE
+for i in range(n_storage):
+    pp.create_load(net_pgm, bus = net.storage.bus[i], p_mw = 0.0, q_mvar = 0.0)
+converter = PandaPowerConverter()
+input_data, extra_info = converter.load_input_data(net_pgm)
+pgm = PowerGridModel(input_data)
+update_sym_load = initialize_array(DatasetType.update, ComponentType.sym_load, n_load_storage )
+update_sym_load["id"] = input_data["sym_load"]['id'][:n_load_storage ]  # same ID
+update_sym_gen = initialize_array(DatasetType.update, ComponentType.sym_gen, n_pv )
+update_sym_gen["id"] = input_data["sym_gen"]['id']  # same ID
+update_data = {ComponentType.sym_load: update_sym_load, ComponentType.sym_gen: update_sym_gen}
 
-
+def powerflow(p_load, q_load, p_sgen, q_sgen, p_storage, q_storage):
+    update_data['sym_load']['p_specified'] = np.concatenate((p_load, p_storage))*1E3
+    update_data['sym_load']['q_specified'] = np.concatenate((q_load, q_storage))*1E3
+    update_data['sym_gen']['p_specified'] = p_sgen * 1E3
+    update_data['sym_gen']['q_specified'] = q_sgen * 1E3
+    pgm.update(update_data = update_data)
+    output_data = pgm.calculate_power_flow(symmetric=True)
+    dict_return = {}
+    dict_return["v"] = output_data['node']['u_pu'][1:]
+    dict_return["loading"] = output_data['transformer']['loading'][0]
+    dict_return["P_trafo"] = output_data['transformer']['p_from']*1E-3
+    dict_return["Q_trafo"] = output_data['transformer']['q_from']*1E-3
+    return dict_return
