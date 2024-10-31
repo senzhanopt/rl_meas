@@ -15,7 +15,7 @@ week_train_diats = week_diats[0:3]  # [0, 1, 2]
 week_test_diats = week_diats[-1]  # [3]
 # action and state
 act_dim = 2*n_storage  # p and q of storage
-s_dim = n_storage + n_pv + 2*n_load + n_bus + 1  # SoC, p_PV, p_load, q_load, V, loading
+s_dim = n_storage + n_pv + 2*n_load + (n_bus-1) + 1  # SoC, p_PV, p_load, q_load, V, loading
 
 
 

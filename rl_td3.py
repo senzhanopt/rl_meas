@@ -53,6 +53,8 @@ itr_length = data_env.itr_length
 r_v_scale = 1
 r_loading_scale = 5
 epi_num = 20
+pf = 'pgm'
+powerflow = data_init.powerflow
 
 
 class ReplayBuffer:
@@ -290,20 +292,30 @@ def main(i_seed):
         soc_current = copy.deepcopy(soc_init * np.ones(n_storage))
         net = data_init.net
             # power flow
-        net.load.p_mw = load_p_current * 1E-3
-        net.load.q_mvar = load_q_current * 1E-3
-        net.sgen.p_mw = p_pv_current * 1E-3
-        net.sgen.q_mvar = q_pv_current * 1E-3
-        net.storage.p_mw = 0 * 1E-3
-        net.storage.q_mvar = 0 * 1E-3
-        pp.runpp(net)
-            # read power flow result
-        v_current = net.res_bus.vm_pu.to_numpy()
-        loading_current = net.res_trafo.loading_percent[0] / 100.0
-        P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
-        Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
-        pf_trafo = P_trafo / np.sqrt(P_trafo ** 2 + Q_trafo ** 2)
-        rpf_trafo = Q_trafo / np.sqrt(P_trafo ** 2 + Q_trafo ** 2)
+        pp_st = time.time()
+        if pf == 'pp':
+            net.load.p_mw = load_p_current * 1E-3
+            net.load.q_mvar = load_q_current * 1E-3
+            net.sgen.p_mw = p_pv_current * 1E-3
+            net.sgen.q_mvar = q_pv_current * 1E-3
+            net.storage.p_mw = 0 * 1E-3
+            net.storage.q_mvar = 0 * 1E-3
+            pp.runpp(net)
+                # read power flow result
+            v_current = net.res_bus.vm_pu.to_numpy()
+            loading_current = net.res_trafo.loading_percent[0] / 100.0
+            P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
+            Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
+            pf_trafo = P_trafo / np.sqrt(P_trafo ** 2 + Q_trafo ** 2)
+            rpf_trafo = Q_trafo / np.sqrt(P_trafo ** 2 + Q_trafo ** 2)
+        else:
+            dict_return = data_init.powerflow(load_p_current, load_q_current, p_pv_current, q_pv_current, np.zeros(n_storage), np.zeros(n_storage))
+            v_current = dict_return["v"]
+            loading_current = dict_return["loading"]
+            P_trafo = dict_return["P_trafo"]
+            Q_trafo = dict_return["Q_trafo"]
+        pp_et = time.time()
+        powerflow_time += pp_et - pp_st
         #  loop for one week
         for i_time in range(n_itr * quarter_num * day_num - 1):   # 15*96*7
             # update state
@@ -330,10 +342,10 @@ def main(i_seed):
             if n_epi > 30:
                 sigma = sigma * noise_decrease_factor
                 # take actions
-            if n_epi >= 0:  # after 5 episodes take actions from DNN
-                a = mu(torch.from_numpy(s_current).float()).to(device)  # action: μ(s),from_numpy(s)将s从numpy转化为torch
+            if n_epi >= 1:  # after 5 episodes take actions from DNN
+                a = mu(torch.from_numpy(s_current).float().to(device)).to(device)  # action: μ(s),from_numpy(s)将s从numpy转化为torch
                 noise_temp = np.random.normal(0, sigma, act_dim)
-                a = a.detach().numpy() + noise_temp  # action加niose
+                a = a.cpu().detach().numpy() + noise_temp  # action加niose
                 a = np.clip(a, -1, 1)
             else:  # first 80 episodes are warm-up phase with random actions
                 a = np.random.uniform(-1, 1, act_dim)
@@ -355,21 +367,30 @@ def main(i_seed):
                         p_storage <= 0) / eta_dis) * itr_length / E_storage
 
             # power flow
-            net.load.p_mw = load_p_current * 1E-3
-            net.load.q_mvar = load_q_current * 1E-3
-            net.sgen.p_mw = p_pv_current * 1E-3
-            net.sgen.q_mvar = q_pv_current * 1E-3
-            net.storage.p_mw = p_storage * 1E-3
-            net.storage.q_mvar = q_storage * 1E-3
             pp_st = time.time()
-            pp.runpp(net)
+            if pf == 'pp':
+                net.load.p_mw = load_p_current * 1E-3
+                net.load.q_mvar = load_q_current * 1E-3
+                net.sgen.p_mw = p_pv_current * 1E-3
+                net.sgen.q_mvar = q_pv_current * 1E-3
+                net.storage.p_mw = p_storage * 1E-3
+                net.storage.q_mvar = q_storage * 1E-3
+                pp_st = time.time()
+                pp.runpp(net)
+                pp_et = time.time()
+                powerflow_time += pp_et - pp_st
+                v_next = net.res_bus.vm_pu.to_numpy()
+                loading_next = net.res_trafo.loading_percent[0]/100.0
+                P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
+                Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
+            else:
+                dict_return = powerflow(load_p_current, load_q_current, p_pv_current, q_pv_current, p_storage, q_storage)
+                v_next = dict_return["v"]
+                loading_next = dict_return["loading"]
+                P_trafo = dict_return["P_trafo"]
+                Q_trafo = dict_return["Q_trafo"]
             pp_et = time.time()
             powerflow_time += pp_et - pp_st
-            v_next = net.res_bus.vm_pu.to_numpy()
-            loading_next = net.res_trafo.loading_percent[0]/100.0
-            P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
-            Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
-
             # reward
             r_v = 0
             r_loading = 0
@@ -436,20 +457,30 @@ def main(i_seed):
         soc_current = copy.deepcopy(soc_init * np.ones(n_storage))
         net = data_init.net
         # power flow
-        net.load.p_mw = load_p_current * 1E-3
-        net.load.q_mvar = load_q_current * 1E-3
-        net.sgen.p_mw = p_pv_current * 1E-3
-        net.sgen.q_mvar = q_pv_current * 1E-3
-        net.storage.p_mw = 0 * 1E-3
-        net.storage.q_mvar = 0 * 1E-3
-        pp.runpp(net)
-        # read power flow result
-        v_current = net.res_bus.vm_pu.to_numpy()
-        loading_current = net.res_trafo.loading_percent[0] / 100.0
-        P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
-        Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
-        pf_trafo = P_trafo / np.sqrt(P_trafo ** 2 + Q_trafo ** 2)
-        rpf_trafo = Q_trafo / np.sqrt(P_trafo ** 2 + Q_trafo ** 2)
+        pp_st = time.time()
+        if pf == 'pp':
+            net.load.p_mw = load_p_current * 1E-3
+            net.load.q_mvar = load_q_current * 1E-3
+            net.sgen.p_mw = p_pv_current * 1E-3
+            net.sgen.q_mvar = q_pv_current * 1E-3
+            net.storage.p_mw = 0 * 1E-3
+            net.storage.q_mvar = 0 * 1E-3
+            pp.runpp(net)
+            # read power flow result
+            v_current = net.res_bus.vm_pu.to_numpy()
+            loading_current = net.res_trafo.loading_percent[0] / 100.0
+            P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
+            Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
+            pf_trafo = P_trafo / np.sqrt(P_trafo ** 2 + Q_trafo ** 2)
+            rpf_trafo = Q_trafo / np.sqrt(P_trafo ** 2 + Q_trafo ** 2)
+        else:
+            dict_return = powerflow(load_p_current, load_q_current, p_pv_current, q_pv_current, np.zeros(n_storage), np.zeros(n_storage))
+            v_current = dict_return["v"]
+            loading_current = dict_return["loading"]
+            P_trafo = dict_return["P_trafo"]
+            Q_trafo = dict_return["Q_trafo"]
+        pp_et = time.time()
+        powerflow_time += pp_et - pp_st
         #  loop for one week
         for i_time in range(n_itr * quarter_num * day_num - 1):  # 15*96*7
             # update state
@@ -473,8 +504,8 @@ def main(i_seed):
             s_loading = copy.deepcopy(np.array([loading_current]))
             s_current = np.concatenate((s_soc, s_p_pv, s_p_load, s_q_load, s_v, s_loading))
             # take actions
-            a = mu(torch.from_numpy(s_current).float()).to(device)  # action: μ(s),from_numpy(s)将s从numpy转化为torch
-            a = a.detach().numpy()
+            a = mu(torch.from_numpy(s_current).float().to(device)).to(device)  # action: μ(s),from_numpy(s)将s从numpy转化为torch
+            a = a.cpu().detach().numpy()
 
             # rescale action to storage power: positive value charge, negative value discharge
             p_storage = a[:(act_dim // 2)] * S_storage
@@ -493,21 +524,30 @@ def main(i_seed):
                     p_storage <= 0) / eta_dis) * itr_length / E_storage
 
             # power flow
-            net.load.p_mw = load_p_current * 1E-3
-            net.load.q_mvar = load_q_current * 1E-3
-            net.sgen.p_mw = p_pv_current * 1E-3
-            net.sgen.q_mvar = q_pv_current * 1E-3
-            net.storage.p_mw = p_storage * 1E-3
-            net.storage.q_mvar = q_storage * 1E-3
             pp_st = time.time()
-            pp.runpp(net)
+            if pf == 'pp':
+                net.load.p_mw = load_p_current * 1E-3
+                net.load.q_mvar = load_q_current * 1E-3
+                net.sgen.p_mw = p_pv_current * 1E-3
+                net.sgen.q_mvar = q_pv_current * 1E-3
+                net.storage.p_mw = p_storage * 1E-3
+                net.storage.q_mvar = q_storage * 1E-3
+                pp_st = time.time()
+                pp.runpp(net)
+                pp_et = time.time()
+                powerflow_time += pp_et - pp_st
+                v_next = net.res_bus.vm_pu.to_numpy()
+                loading_next = net.res_trafo.loading_percent[0] / 100.0
+                P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
+                Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
+            else:
+                dict_return = powerflow(load_p_current, load_q_current, p_pv_current, q_pv_current, p_storage, q_storage)
+                v_next = dict_return["v"]
+                loading_next = dict_return["loading"]
+                P_trafo = dict_return["P_trafo"]
+                Q_trafo = dict_return["Q_trafo"]
             pp_et = time.time()
             powerflow_time += pp_et - pp_st
-            v_next = net.res_bus.vm_pu.to_numpy()
-            loading_next = net.res_trafo.loading_percent[0] / 100.0
-            P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
-            Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
-
             # reward
             r_v = 0
             r_loading = 0
