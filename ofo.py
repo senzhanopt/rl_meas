@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 import copy
 
+
 ## parameters
 beta = 1e5
 rho = 1e4
@@ -12,7 +13,8 @@ epsilon = 1E-2
 n_itr = 15
 start_ofo, end_ofo = 21*96, 28*96
 pv_control = False
-lr = True
+lr = False
+pf = 'pgm'
 n_timesteps = end_ofo-start_ofo
 load_p = load_p[start_ofo:end_ofo,:]
 load_q = load_q[start_ofo:end_ofo,:]
@@ -139,17 +141,24 @@ for itr in tqdm(range(n_timesteps * n_itr)):
     mat_q_pv[itr,:] = q_pv
 
     # power flow
-    net.load.p_mw = load_p_current * 1E-3
-    net.load.q_mvar = load_q_current * 1E-3
-    net.sgen.p_mw = p_pv * 1E-3
-    net.sgen.q_mvar = q_pv * 1E-3
-    net.storage.p_mw = p_storage * 1E-3
-    net.storage.q_mvar = q_storage * 1E-3
-    pp.runpp(net)
-    v = net.res_bus.vm_pu.to_numpy()[1:]
-    loading = net.res_trafo.loading_percent[0]/100.0
-    P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
-    Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
+    if pf == 'pp':
+        net.load.p_mw = load_p_current * 1E-3
+        net.load.q_mvar = load_q_current * 1E-3
+        net.sgen.p_mw = p_pv * 1E-3
+        net.sgen.q_mvar = q_pv * 1E-3
+        net.storage.p_mw = p_storage * 1E-3
+        net.storage.q_mvar = q_storage * 1E-3
+        pp.runpp(net)
+        v = net.res_bus.vm_pu.to_numpy()[1:]
+        loading = net.res_trafo.loading_percent[0]/100.0
+        P_trafo = net.res_trafo.p_hv_mw[0] * 1E3
+        Q_trafo = net.res_trafo.q_hv_mvar[0] * 1E3
+    else:
+        dict_return = powerflow(load_p_current, load_q_current, p_pv, q_pv, p_storage, q_storage)
+        v = dict_return["v"]
+        loading = dict_return["loading"]
+        P_trafo = dict_return["P_trafo"]
+        Q_trafo = dict_return["Q_trafo"]
     pf_trafo = P_trafo / np.sqrt(P_trafo**2+Q_trafo**2)
     rpf_trafo = Q_trafo / np.sqrt(P_trafo**2+Q_trafo**2)
     mat_v[itr, :] = v

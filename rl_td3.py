@@ -52,7 +52,7 @@ S_storage = data_env.S_storage
 itr_length = data_env.itr_length
 r_v_scale = 1
 r_loading_scale = 5
-epi_num = 500
+epi_num = 20
 
 
 class ReplayBuffer:
@@ -116,26 +116,67 @@ class QNet(nn.Module):  # 搭建critic神经网络，输入state和action，输�
 
         return q
 
+class QNet2(nn.Module):  # 搭建critic神经网络，输入state和action，输出Q值
+    def __init__(self):
+        super(QNet2, self).__init__()
+        self.fc_s = nn.Linear(s_dim, s_dim)  # s_dim
+        self.fc_a = nn.Linear(act_dim, act_dim)  # act_dim
+        self.fc_q = nn.Linear(s_dim+act_dim, 16)
+        self.fc_3 = nn.Linear(16, 1)
 
-def train(mu, mu_target, q, q_target, memory, q_optimizer, mu_optimizer):
+    def forward(self, x, a):
+        h1 = F.relu(self.fc_s(x))
+        a = a.to(torch.float32)
+        h2 = F.relu(self.fc_a(a))
+        cat = torch.cat([h1, h2], dim=1)  # 将h1,h2合并为[h1, h2]
+        q = F.relu(self.fc_q(cat))
+        q = self.fc_3(q)  # 未设置输出的激活函数，因为q值范围未知
+
+        return q
+
+
+def train(mu, mu_target, q1, q1_target, q2, q2_target, memory, q1_optimizer, q2_optimizer, mu_optimizer, t):
     # 更新q_optimizer和mu_optimizer的参数，用于mu网络和q网络
 
     s, a, r, s_prime, done = memory.sample(batch_size)  # 从memory中采样batch_size个训练样本
     mu_target_input = mu_target(s_prime).to(device)
-    target = r + (torch.ones(done.size()).to(device) - done.long().to(device)) * gamma * q_target(
+    target1 = r + (torch.ones(done.size()).to(device) - done.long().to(device)) * gamma * q1_target(
         s_prime.to(device), mu_target_input)  # 通过Q_target网络计算r+gamma*Q'(s_(n+1),a_(n+1))的值
-    target = target.to(torch.float32)
-    q_loss = F.smooth_l1_loss(q(s.to(device), a.to(device)),
-                              target.detach().to(device))  # 计算TD error，Q用smoothl1loss作为损失函数
-    q_optimizer.zero_grad()  # 将网络中的参数设为0
-    q_loss.backward()  # 反向传播
-    q_optimizer.step()  # 更新网络参数
+    target2 = r + (torch.ones(done.size()).to(device) - done.long().to(device)) * gamma * q2_target(
+        s_prime.to(device), mu_target_input)  # 通过Q_target网络计算r+gamma*Q'(s_(n+1),a_(n+1))的值
+    target1 = target1.to(torch.float32)
+    target2 = target2.to(torch.float32)
+    target = target1.to(torch.float32)
+    for i in range(target.size(dim=0)):
+        if target2.data[i] < target1.data[i]:
+            target1.data[i] = target2.data[i]
+        else:
+            target2.data[i] = target1.data[i]
 
-    mu_input = mu(s.to(device))
-    mu_loss = -q(s.to(device), mu_input.to(device)).mean()
-    mu_optimizer.zero_grad()
-    mu_loss.backward()
-    mu_optimizer.step()
+    target1 = target1.to(torch.float32)
+    target2 = target2.to(torch.float32)
+    q1_value = q1(s, a)
+    q2_value = q2(s, a)
+
+    q1_loss = F.smooth_l1_loss(q1(s.to(device), a.to(device)),
+                               target1.detach().to(device))  # 计算TD error，Q用smoothl1loss作为损失函数
+    q1_optimizer.zero_grad()  # 将网络中的参数设为0
+    q1_loss.backward()  # 反向传播
+    q1_optimizer.step()  # 更新网络参数
+
+    q2_loss = F.smooth_l1_loss(q2(s.to(device), a.to(device)),
+                               target2.detach().to(device))  # 计算TD error，Q用smoothl1loss作为损失函数
+    q2_optimizer.zero_grad()  # 将网络中的参数设为0
+    q2_loss.backward()  # 反向传播
+    q2_optimizer.step()  # 更新网络参数
+
+    # delay
+    if (t % (15*96*2) == 0) == 0:
+        mu_input = mu(s.to(device))
+        mu_loss = -q1(s.to(device), mu_input.to(device)).mean()
+        mu_optimizer.zero_grad()
+        mu_loss.backward()
+        mu_optimizer.step()
 
 
 def soft_update(net, net_target):  # 更新target网络的参数
@@ -216,18 +257,22 @@ def main(i_seed):
     score_history = []
     score = []
     memory = ReplayBuffer()
-    q, q_target = QNet().to(device), QNet().to(device)  # 创建q，q_target网络
+    q1, q1_target = QNet().to(device), QNet().to(device)  # 创建q，q_target网络
+    q2, q2_target = QNet2().to(device), QNet2().to(device)  # 创建q，q_target网络
+    q1_target.load_state_dict(q1.state_dict())
+    q2_target.load_state_dict(q2.state_dict())
     score = 0.0  # 初始化score
     mu, mu_target = MuNet().to(device), MuNet().to(device)
     ou_noise = {}
-    q_optimizer = optim.Adam(q.parameters(), lr=lr_q)
+    q1_optimizer = optim.Adam(q1.parameters(), lr=lr_q)
+    q2_optimizer = optim.Adam(q2.parameters(), lr=lr_q)
     mu_optimizer = optim.Adam(mu.parameters(), lr=lr_mu)
     # store result
         # rl
     score_save = np.zeros(epi_num)
         # storage
-    p_save = np.zeros((7*24*60, act_dim))
-    q_save = np.zeros((7*24*60, act_dim))
+    p_save = np.zeros((7 * 24 * 60, int(act_dim / 2)))
+    q_save = np.zeros((7 * 24 * 60, int(act_dim / 2)))
     # state RL
     for n_epi in tqdm(range(epi_num)):
         episode_time = 0
@@ -369,12 +414,13 @@ def main(i_seed):
             # save to memory
             memory.put((s_current, a, r, s_next, done))  # 储存近memory中
             train_st = time.time()
-            # 当memory size大于100时，buffer足够大，每天更新一次参数
-            if memory.size() >= 100 and i_time % 15*96 == 0:
+            # 当memory size大于1000时，buffer足够大，每天更新一次参数
+            if memory.size() >= 1000 and i_time % 15*96 == 0:
                 for i in range(5):
-                    train(mu, mu_target, q, q_target, memory, q_optimizer, mu_optimizer)
+                    train(mu, mu_target, q1, q1_target, q2, q2_target, memory, q1_optimizer, q2_optimizer, mu_optimizer, i_time)
                     soft_update(mu, mu_target)
-                    soft_update(q, q_target)
+                    soft_update(q1, q1_target)
+                    soft_update(q2, q2_target)
             train_et = time.time()
             train_time += train_et - train_st
 
