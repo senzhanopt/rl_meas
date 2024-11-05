@@ -51,8 +51,8 @@ E_storage = data_env.E_storage
 S_storage = data_env.S_storage
 itr_length = data_env.itr_length
 r_v_scale = 1
-r_loading_scale = 5
-epi_num = 20
+r_loading_scale = 30
+epi_num = 500
 pf = 'pgm'
 powerflow = data_init.powerflow
 
@@ -88,9 +88,9 @@ class ReplayBuffer:
 class MuNet(nn.Module):  # 搭建actor的神经网络，输入state输出action
     def __init__(self):
         super(MuNet, self).__init__()  # 401*1048*256*72
-        self.fc1 = nn.Linear(s_dim, 1048)
-        self.fc2 = nn.Linear(1048, 256)
-        self.fc_mu = nn.Linear(256, act_dim)  # action是72维
+        self.fc1 = nn.Linear(s_dim, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc_mu = nn.Linear(128, act_dim)  # action是72维
 
     def forward(self, x):
         x = F.relu(self.fc1(x))  # 使用relu激活函数
@@ -118,23 +118,63 @@ class QNet(nn.Module):  # 搭建critic神经网络，输入state和action，输�
 
         return q
 
+class QNet2(nn.Module):  # 搭建critic神经网络，输入state和action，输出Q值
+    def __init__(self):
+        super(QNet2, self).__init__()
+        self.fc_s = nn.Linear(s_dim, s_dim)  # s_dim
+        self.fc_a = nn.Linear(act_dim, act_dim)  # act_dim
+        self.fc_q = nn.Linear(s_dim+act_dim, 16)
+        self.fc_3 = nn.Linear(16, 1)
 
-def train(mu, mu_target, q, q_target, memory, q_optimizer, mu_optimizer):
+    def forward(self, x, a):
+        h1 = F.relu(self.fc_s(x))
+        a = a.to(torch.float32)
+        h2 = F.relu(self.fc_a(a))
+        cat = torch.cat([h1, h2], dim=1)  # 将h1,h2合并为[h1, h2]
+        q = F.relu(self.fc_q(cat))
+        q = self.fc_3(q)  # 未设置输出的激活函数，因为q值范围未知
+
+        return q
+
+
+def train(mu, mu_target, q1, q1_target, q2, q2_target, memory, q1_optimizer, q2_optimizer, mu_optimizer, t):
     # 更新q_optimizer和mu_optimizer的参数，用于mu网络和q网络
 
     s, a, r, s_prime, done = memory.sample(batch_size)  # 从memory中采样batch_size个训练样本
     mu_target_input = mu_target(s_prime).to(device)
-    target = r + (torch.ones(done.size()).to(device) - done.long().to(device)) * gamma * q_target(
+    target1 = r + (torch.ones(done.size()).to(device) - done.long().to(device)) * gamma * q1_target(
         s_prime.to(device), mu_target_input)  # 通过Q_target网络计算r+gamma*Q'(s_(n+1),a_(n+1))的值
-    target = target.to(torch.float32)
-    q_loss = F.smooth_l1_loss(q(s.to(device), a.to(device)),
-                              target.detach().to(device))  # 计算TD error，Q用smoothl1loss作为损失函数
-    q_optimizer.zero_grad()  # 将网络中的参数设为0
-    q_loss.backward()  # 反向传播
-    q_optimizer.step()  # 更新网络参数
+    target2 = r + (torch.ones(done.size()).to(device) - done.long().to(device)) * gamma * q2_target(
+        s_prime.to(device), mu_target_input)  # 通过Q_target网络计算r+gamma*Q'(s_(n+1),a_(n+1))的值
+    target1 = target1.to(torch.float32)
+    target2 = target2.to(torch.float32)
+    target = target1.to(torch.float32)
+    for i in range(target.size(dim=0)):
+        if target2.data[i] < target1.data[i]:
+            target1.data[i] = target2.data[i]
+        else:
+            target2.data[i] = target1.data[i]
 
+    target1 = target1.to(torch.float32)
+    target2 = target2.to(torch.float32)
+    q1_value = q1(s, a)
+    q2_value = q2(s, a)
+
+    q1_loss = F.smooth_l1_loss(q1(s.to(device), a.to(device)),
+                               target1.detach().to(device))  # 计算TD error，Q用smoothl1loss作为损失函数
+    q1_optimizer.zero_grad()  # 将网络中的参数设为0
+    q1_loss.backward()  # 反向传播
+    q1_optimizer.step()  # 更新网络参数
+
+    q2_loss = F.smooth_l1_loss(q2(s.to(device), a.to(device)),
+                               target2.detach().to(device))  # 计算TD error，Q用smoothl1loss作为损失函数
+    q2_optimizer.zero_grad()  # 将网络中的参数设为0
+    q2_loss.backward()  # 反向传播
+    q2_optimizer.step()  # 更新网络参数
+
+    # delay
     mu_input = mu(s.to(device))
-    mu_loss = -q(s.to(device), mu_input.to(device)).mean()
+    mu_loss = -q1(s.to(device), mu_input.to(device)).mean()
     mu_optimizer.zero_grad()
     mu_loss.backward()
     mu_optimizer.step()
@@ -218,15 +258,21 @@ def main(i_seed):
     score_history = []
     score = []
     memory = ReplayBuffer()
-    q, q_target = QNet().to(device), QNet().to(device)  # 创建q，q_target网络
+    q1, q1_target = QNet().to(device), QNet().to(device)  # 创建q，q_target网络
+    q2, q2_target = QNet2().to(device), QNet2().to(device)  # 创建q，q_target网络
+    q1_target.load_state_dict(q1.state_dict())
+    q2_target.load_state_dict(q2.state_dict())
     score = 0.0  # 初始化score
     mu, mu_target = MuNet().to(device), MuNet().to(device)
     ou_noise = {}
-    q_optimizer = optim.Adam(q.parameters(), lr=lr_q)
+    q1_optimizer = optim.Adam(q1.parameters(), lr=lr_q)
+    q2_optimizer = optim.Adam(q2.parameters(), lr=lr_q)
     mu_optimizer = optim.Adam(mu.parameters(), lr=lr_mu)
     # store result
         # rl
     score_save = np.zeros(epi_num)
+    score_v_save = np.zeros(epi_num)
+    score_loading_save = np.zeros(epi_num)
         # storage
     p_save = np.zeros((7 * 24 * 60, int(act_dim / 2)))
     q_save = np.zeros((7 * 24 * 60, int(act_dim / 2)))
@@ -297,7 +343,7 @@ def main(i_seed):
             if n_epi > 30:
                 sigma = sigma * noise_decrease_factor
                 # take actions
-            if n_epi >= 1:  # after 1 episodes take actions from DNN
+            if n_epi >= 30:  # after 5 episodes take actions from DNN
                 a = mu(torch.from_numpy(s_current).float().to(device)).to(device)  # action: μ(s),from_numpy(s)将s从numpy转化为torch
                 noise_temp = np.random.normal(0, sigma, act_dim)
                 a = a.cpu().detach().numpy() + noise_temp  # action加niose
@@ -350,12 +396,25 @@ def main(i_seed):
             r_v = 0
             r_loading = 0
             for v_value in v_next:
-                if v_value >= 1.01:
-                    r_v -= v_value - 1.01
-                elif v_value <= 0.99:
-                    r_v -= 0.99 - v_value
-            if r_loading >= 1:
-                r_loading -= r_loading - 1
+                if 0.97 <= v_value <= 1.03:
+                    r_v += 0.01
+                elif 1.03 < v_value <= 1.05:
+                    r_v += 0.001
+                elif 0.95 <= v_value < 0.97:
+                    r_v += 0.001
+                elif v_value < 0.95:
+                    r_v -= (0.95 - v_value) * 2
+                elif v_value > 1.05:
+                    r_v -= (v_value - 1.05) * 2
+
+            if loading_next <= 0.5:
+                r_loading += (0.5 - loading_next) / 2
+            elif 0.5 < loading_next <= 0.8:
+                r_loading += (0.8 - loading_next) / 4
+            elif 0.8 < loading_next <= 1:
+                r_loading -= (1 - loading_next) / 2
+            elif 1 < loading_next:
+                r_loading -= (loading_next - 1)*2
 
             r = r_v_scale*r_v + r_loading_scale*r_loading
             """
@@ -390,18 +449,23 @@ def main(i_seed):
             # save to memory
             memory.put((s_current, a, r, s_next, done))  # 储存近memory中
             train_st = time.time()
-            # 当memory size大于100时，buffer足够大，每天更新一次参数
-            if memory.size() >= 100 and i_time % 15*96 == 0:
+            # 当memory size大于1000时，buffer足够大，每天更新一次参数
+            if memory.size() >= 1000 and i_time % (15*96) == 0:
                 for i in range(5):
-                    train(mu, mu_target, q, q_target, memory, q_optimizer, mu_optimizer)
-                    soft_update(mu, mu_target)
-                    soft_update(q, q_target)
+                    train(mu, mu_target, q1, q1_target, q2, q2_target, memory, q1_optimizer, q2_optimizer, mu_optimizer, i_time)
+                    # delay
+                    if i_time % (2*15*96) == 0:
+                        soft_update(mu, mu_target)
+                        soft_update(q1, q1_target)
+                        soft_update(q2, q2_target)
             train_et = time.time()
             train_time += train_et - train_st
 
         ################################## test set
         week = range(week_num)[-1]  # randomly select one week to train
         score = 0
+        score_v = 0
+        score_loading = 0
         # initial state for rl
         load_p_current = copy.deepcopy(data_init.load_p[week * 7 * 24 * 4, :])
         load_q_current = copy.deepcopy(data_init.load_q[week * 7 * 24 * 4, :])
@@ -502,20 +566,34 @@ def main(i_seed):
                 Q_trafo = dict_return["Q_trafo"]
             pp_et = time.time()
             powerflow_time += pp_et - pp_st
-
             # reward
             r_v = 0
             r_loading = 0
             for v_value in v_next:
-                if v_value >= 1.01:
-                    r_v -= v_value - 1.01
-                elif v_value <= 0.99:
-                    r_v -= 0.99 - v_value
-            if r_loading >= 1:
-                r_loading -= r_loading - 1
+                if 0.97 <= v_value <= 1.03:
+                    r_v += 0.01
+                elif 1.03 < v_value <= 1.05:
+                    r_v += 0.001
+                elif 0.95 <= v_value < 0.97:
+                    r_v += 0.001
+                elif v_value < 0.95:
+                    r_v -= (0.95 - v_value) * 2
+                elif v_value > 1.05:
+                    r_v -= (v_value - 1.05) * 2
+
+            if loading_next <= 0.5:
+                r_loading += (0.5 - loading_next) / 2
+            elif 0.5 < loading_next <= 0.8:
+                r_loading += (0.8 - loading_next) / 4
+            elif 0.8 < loading_next <= 1:
+                r_loading -= (1 - loading_next) / 2
+            elif 1 < loading_next:
+                r_loading -= (loading_next - 1)*2
 
             r = r_v_scale * r_v + r_loading_scale * r_loading
             score += r
+            score_v += r_v_scale * r_v
+            score_loading += r_loading_scale * r_loading
             """
             mat_v[itr, :] = v
             mat_loading[itr] = loading
@@ -556,12 +634,16 @@ def main(i_seed):
 
         et = time.time()
         episode_time += et - st
-        print("episode:", n_epi,  "score:", score, "time:", episode_time, "powerflow time:",
+        print("episode:", n_epi,  "score:", score, "score_v:", score_v, "score_loading:", score_loading, "time:", episode_time, "powerflow time:",
               powerflow_time, "train time:", train_time)
 
     ############save result
     score_save_pd = pandas.DataFrame(score_save)
     score_save_pd.to_excel(path_saving / f"score_{i_seed}.xlsx", startcol=0)
+    score_v_save_pd = pandas.DataFrame(score_v_save)
+    score_v_save_pd.to_excel(path_saving / f"score_v_{i_seed}.xlsx", startcol=0)
+    score_loading_save_pd = pandas.DataFrame(score_loading_save)
+    score_loading_save_pd.to_excel(path_saving / f"score_loading_{i_seed}.xlsx", startcol=0)
     p_save_pd = pandas.DataFrame(p_save)
     p_save_pd.to_excel(path_saving / f"storage_p_{i_seed}.xlsx", startcol=0)
     q_save_pd = pandas.DataFrame(q_save)
