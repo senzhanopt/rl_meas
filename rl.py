@@ -24,19 +24,19 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # create a new data for runing
 data_env = importlib.reload(data_init)
 # Hyperparameters
-lr_mu = 0.0001  # learning rate of actor network，（25）in the paper 0.0001
-lr_q = 0.0005  # learning rate of critic network，（24）in the paper 0.001
-gamma = 0.99  # discount factor， 0.7 in the paper
-batch_size = 32
-buffer_limit = 500000
-tau = 0.001  # for target soft update （26） （27） in the paper
-noise_decrease_factor = 0.993   # noise sigma decreasing factor
+lr_mu = 1.7918800157156533e-05  # learning rate of actor network，（25）in the paper 0.0001
+lr_q = 0.003164641782114985  # learning rate of critic network，（24）in the paper 0.001
+gamma = 0.7175638451488489  # discount factor， 0.7 in the paper
+batch_size = 512
+buffer_limit = 500000000000
+tau = 0.002855707953807889  # for target soft update （26） （27） in the paper
+noise_decrease_factor = 0.912845791926337   # noise sigma decreasing factor
 n_agent = data_env.n_agent
 week_num = 4
 week_train_num = 3
 day_num = 7
 quarter_num = data_env.n_quarter
-n_itr = data_env.n_itr  # 15
+n_itr = data_init.n_itr  # 1
 n_pv = data_env.n_pv # 48, 50% nodes have a pv
 n_storage = data_env.n_storage
 n_load = data_env.n_load
@@ -50,9 +50,10 @@ eta_dis = data_env.eta_dis
 E_storage = data_env.E_storage
 S_storage = data_env.S_storage
 itr_length = data_env.itr_length
-r_v_scale = 1
-r_loading_scale = 30
-epi_num = 500
+r_v_scale = 9.050585110542519
+r_loading_scale = 24.101745956530074
+r_pv_scale = 0.165347515154267
+epi_num = 1000
 pf = 'pgm'
 powerflow = data_init.powerflow
 
@@ -88,9 +89,9 @@ class ReplayBuffer:
 class MuNet(nn.Module):  # 搭建actor的神经网络，输入state输出action
     def __init__(self):
         super(MuNet, self).__init__()  # 401*1048*256*72
-        self.fc1 = nn.Linear(s_dim, 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.fc_mu = nn.Linear(128, act_dim)  # action是72维
+        self.fc1 = nn.Linear(s_dim, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc_mu = nn.Linear(256, act_dim)  # action是72维
 
     def forward(self, x):
         x = F.relu(self.fc1(x))  # 使用relu激活函数
@@ -173,11 +174,12 @@ def train(mu, mu_target, q1, q1_target, q2, q2_target, memory, q1_optimizer, q2_
     q2_optimizer.step()  # 更新网络参数
 
     # delay
-    mu_input = mu(s.to(device))
-    mu_loss = -q1(s.to(device), mu_input.to(device)).mean()
-    mu_optimizer.zero_grad()
-    mu_loss.backward()
-    mu_optimizer.step()
+    if (t % (n_itr*96*2) == 0) == 0:
+        mu_input = mu(s.to(device))
+        mu_loss = -q1(s.to(device), mu_input.to(device)).mean()
+        mu_optimizer.zero_grad()
+        mu_loss.backward()
+        mu_optimizer.step()
 
 
 def soft_update(net, net_target):  # 更新target网络的参数
@@ -253,6 +255,8 @@ def projection_storage(Pmax, Pmin, S, p, q):  # charging power is positive
 
 def main(i_seed):
     np.random.seed(i_seed)
+    random.seed(i_seed)
+    torch.manual_seed(i_seed)
     sigma = 0.3
     # create variables for rl
     score_history = []
@@ -273,9 +277,12 @@ def main(i_seed):
     score_save = np.zeros(epi_num)
     score_v_save = np.zeros(epi_num)
     score_loading_save = np.zeros(epi_num)
+    score_pv_save = np.zeros(epi_num)
         # storage
-    p_save = np.zeros((7 * 24 * 60, int(act_dim / 2)))
-    q_save = np.zeros((7 * 24 * 60, int(act_dim / 2)))
+    p_ess_save = np.zeros((7 * 96 * n_itr, n_storage))
+    q_ess_save = np.zeros((7 * 96 * n_itr, n_storage))
+    p_pv_save = np.zeros((7 * 96 * n_itr, n_pv))
+    q_pv_save = np.zeros((7 * 96 * n_itr, n_pv))
     # state RL
     for n_epi in tqdm(range(epi_num)):
         episode_time = 0
@@ -284,6 +291,7 @@ def main(i_seed):
         st = time.time()
         ################################## training set
         week = random.choice(range(week_num))  # randomly select one week to train
+        S_pv = data_init.S_pv
         # initial state for rl
         load_p_current = copy.deepcopy(data_init.load_p[week*7*24*4, :])
         load_q_current = copy.deepcopy(data_init.load_q[week*7*24*4, :])
@@ -325,7 +333,6 @@ def main(i_seed):
                 load_q_current = copy.deepcopy(load_q_next)
                 sgen_p_current = copy.deepcopy(sgen_p_next)
                 p_pv_current = copy.deepcopy(p_pv_next)
-                q_pv_current = copy.deepcopy(np.zeros(n_pv))
                 soc_current = copy.deepcopy(soc_next)
                 v_current = copy.deepcopy(v_next)
                 loading_current = copy.deepcopy(loading_next)
@@ -352,15 +359,31 @@ def main(i_seed):
                 a = np.random.uniform(-1, 1, act_dim)
 
             # rescale action to storage power: positive value charge, negative value discharge
-            p_storage = a[:(act_dim//2)] * S_storage
-            q_storage = a[(act_dim//2):] * S_storage
+            p_storage = a[:n_storage] * S_storage
+            q_storage = a[n_storage:2*n_storage] * S_storage
+            p_pv_current = (a[2*n_storage:2*n_storage+n_pv]+1)/2 * S_pv
+            q_pv_current = a[2*n_storage+n_pv:2*n_storage+2*n_pv] * S_pv
+            # project SOC action
             Pmax = (soc_max - soc_current) * E_storage / itr_length / eta_ch
             Pmin = -(soc_current - soc_min) * E_storage / itr_length * eta_dis
+            for i in range(Pmin.size):
+                if Pmin[i] >= 0:
+                    Pmin[i] = 0.0
+
             for i in range(n_storage):
                 p_storage[i], q_storage[i] = projection_storage(Pmax[i], Pmin[i],
                                                                 S_storage[i], p_storage[i], q_storage[i])
+            # project PV action
+            p_pv_future = copy.deepcopy(data_init.sgen_p[week * 7 * 24 * 4 + i_time // n_itr, :])
+            for i in range(n_pv):
+                p_pv_current[i], q_pv_current[i] = projection_pv(sgen_p_current[i], S_pv[i], p_pv_current[i], q_pv_current[i])
+                if p_pv_current[i] >= p_pv_future[i]:
+                    p_pv_current[i] = p_pv_future[i]
+
                 # rescale the action back to -1, 1
-            a = np.concatenate((p_storage/S_storage, q_storage/S_storage))
+            a_pv_p = p_pv_current / S_pv * 2 - 1
+            a_pv_q = q_pv_current / S_pv
+            a = np.concatenate((p_storage/S_storage, q_storage/S_storage, a_pv_p, a_pv_q))
 
             # update next time
             soc_next = copy.deepcopy(soc_current)
@@ -395,28 +418,29 @@ def main(i_seed):
             # reward
             r_v = 0
             r_loading = 0
+            r_pv = 0
+
             for v_value in v_next:
                 if 0.97 <= v_value <= 1.03:
                     r_v += 0.01
                 elif 1.03 < v_value <= 1.05:
-                    r_v += 0.001
+                    r_v += 0
                 elif 0.95 <= v_value < 0.97:
-                    r_v += 0.001
+                    r_v += 0
                 elif v_value < 0.95:
                     r_v -= (0.95 - v_value) * 2
                 elif v_value > 1.05:
                     r_v -= (v_value - 1.05) * 2
 
-            if loading_next <= 0.5:
-                r_loading += (0.5 - loading_next) / 2
-            elif 0.5 < loading_next <= 0.8:
-                r_loading += (0.8 - loading_next) / 4
-            elif 0.8 < loading_next <= 1:
-                r_loading -= (1 - loading_next) / 2
-            elif 1 < loading_next:
-                r_loading -= (loading_next - 1)*2
+            i_count = 0
+            for p_pv_value in p_pv_current:
+                r_pv -= (p_pv_value - p_pv_future[i_count])**2
+                i_count += 1
 
-            r = r_v_scale*r_v + r_loading_scale*r_loading
+            if 1 < loading_next:
+                r_loading -= (loading_next - 1)*10
+
+            r = r_v_scale*r_v + r_loading_scale*r_loading + r_pv_scale*r_pv
             """
             mat_v[itr, :] = v
             mat_loading[itr] = loading
@@ -434,7 +458,7 @@ def main(i_seed):
                 load_q_next = copy.deepcopy(load_q_current)
                 sgen_p_next = copy.deepcopy(sgen_p_current)
                 p_pv_next = copy.deepcopy(p_pv_current)
-                q_pv_next = np.zeros(n_pv)
+                q_pv_next = copy.deepcopy(q_pv_current)
 
                 # state_next
             s_soc_next = copy.deepcopy(soc_next)
@@ -450,11 +474,11 @@ def main(i_seed):
             memory.put((s_current, a, r, s_next, done))  # 储存近memory中
             train_st = time.time()
             # 当memory size大于1000时，buffer足够大，每天更新一次参数
-            if memory.size() >= 1000 and i_time % (15*96) == 0:
-                for i in range(5):
+            if memory.size() >= 2000 and i_time % (n_itr*96) == 0:
+                for i in range(7):
                     train(mu, mu_target, q1, q1_target, q2, q2_target, memory, q1_optimizer, q2_optimizer, mu_optimizer, i_time)
                     # delay
-                    if i_time % (2*15*96) == 0:
+                    if i_time % (2*n_itr*96) == 0:
                         soft_update(mu, mu_target)
                         soft_update(q1, q1_target)
                         soft_update(q2, q2_target)
@@ -466,6 +490,7 @@ def main(i_seed):
         score = 0
         score_v = 0
         score_loading = 0
+        score_pv = 0
         # initial state for rl
         load_p_current = copy.deepcopy(data_init.load_p[week * 7 * 24 * 4, :])
         load_q_current = copy.deepcopy(data_init.load_q[week * 7 * 24 * 4, :])
@@ -526,15 +551,31 @@ def main(i_seed):
             a = a.cpu().detach().numpy()
 
             # rescale action to storage power: positive value charge, negative value discharge
-            p_storage = a[:(act_dim // 2)] * S_storage
-            q_storage = a[(act_dim // 2):] * S_storage
+            p_storage = a[:n_storage] * S_storage
+            q_storage = a[n_storage:2*n_storage] * S_storage
+            p_pv_current = (a[2*n_storage:2*n_storage+n_pv]+1)/2 * S_pv
+            q_pv_current = a[2*n_storage+n_pv:2*n_storage+2*n_pv] * S_pv
+            # project SOC action
             Pmax = (soc_max - soc_current) * E_storage / itr_length / eta_ch
             Pmin = -(soc_current - soc_min) * E_storage / itr_length * eta_dis
+            for i in range(Pmin.size):
+                if Pmin[i] >= 0:
+                    Pmin[i] = 0.0
+
             for i in range(n_storage):
                 p_storage[i], q_storage[i] = projection_storage(Pmax[i], Pmin[i],
                                                                 S_storage[i], p_storage[i], q_storage[i])
+            # project PV action
+            p_pv_future = copy.deepcopy(data_init.sgen_p[week * 7 * 24 * 4 + i_time // n_itr, :])
+            for i in range(n_pv):
+                p_pv_current[i], q_pv_current[i] = projection_pv(sgen_p_current[i], S_pv[i], p_pv_current[i], q_pv_current[i])
+                if p_pv_current[i] >= p_pv_future[i]:
+                    p_pv_current[i] = p_pv_future[i]
+
                 # rescale the action back to -1, 1
-            a = np.concatenate((p_storage / S_storage, q_storage / S_storage))
+            a_pv_p = p_pv_current / S_pv * 2 - 1
+            a_pv_q = q_pv_current / S_pv
+            a = np.concatenate((p_storage/S_storage, q_storage/S_storage, a_pv_p, a_pv_q))
 
             # update next time
             soc_next = copy.deepcopy(soc_current)
@@ -569,31 +610,34 @@ def main(i_seed):
             # reward
             r_v = 0
             r_loading = 0
+            r_pv = 0
+
             for v_value in v_next:
                 if 0.97 <= v_value <= 1.03:
                     r_v += 0.01
                 elif 1.03 < v_value <= 1.05:
-                    r_v += 0.001
+                    r_v += 0
                 elif 0.95 <= v_value < 0.97:
-                    r_v += 0.001
+                    r_v += 0
                 elif v_value < 0.95:
                     r_v -= (0.95 - v_value) * 2
                 elif v_value > 1.05:
                     r_v -= (v_value - 1.05) * 2
 
-            if loading_next <= 0.5:
-                r_loading += (0.5 - loading_next) / 2
-            elif 0.5 < loading_next <= 0.8:
-                r_loading += (0.8 - loading_next) / 4
-            elif 0.8 < loading_next <= 1:
-                r_loading -= (1 - loading_next) / 2
-            elif 1 < loading_next:
-                r_loading -= (loading_next - 1)*2
+            i_count = 0
+            for p_pv_value in p_pv_current:
+                r_pv -= (p_pv_value - p_pv_future[i_count]) ** 2
+                i_count += 1
 
-            r = r_v_scale * r_v + r_loading_scale * r_loading
+            if 1 < loading_next:
+                r_loading -= (loading_next - 1) * 10
+
+            r = r_v_scale * r_v + r_loading_scale * r_loading + r_pv_scale * r_pv
+
             score += r
             score_v += r_v_scale * r_v
             score_loading += r_loading_scale * r_loading
+            score_pv += r_pv_scale * r_pv
             """
             mat_v[itr, :] = v
             mat_loading[itr] = loading
@@ -613,28 +657,23 @@ def main(i_seed):
                 p_pv_next = copy.deepcopy(p_pv_current)
                 q_pv_next = np.zeros(n_pv)
 
-                # state_next
-            s_soc_next = copy.deepcopy(soc_next)
-            s_p_pv_next = copy.deepcopy(p_pv_next)
-            s_p_load_next = copy.deepcopy(load_p_next)
-            s_q_load_next = copy.deepcopy(load_q_next)
-            s_v_next = (v_next - 0.95) / (1.05 - 0.95)
-            s_loading_next = copy.deepcopy(np.array([loading_next]))
-            s_next = np.concatenate(
-                (s_soc_next, s_p_pv_next, s_p_load_next, s_q_load_next, s_v_next, s_loading_next))
-
             # save storage
             if n_epi == epi_num - 1:
-                p_save[i_time, :] = p_storage
-                q_save[i_time, :] = q_storage
+                p_ess_save[i_time, :] = p_storage
+                q_ess_save[i_time, :] = q_storage
+                p_pv_save[i_time, :] = p_pv_current
+                q_pv_save[i_time, :] = q_pv_current
 
         # save score
         score_save[n_epi] = score
+        score_v_save[n_epi] = score_v
+        score_loading_save[n_epi] = score_loading
+        score_pv_save[n_epi] = score_pv
 
 
         et = time.time()
         episode_time += et - st
-        print("episode:", n_epi,  "score:", score, "score_v:", score_v, "score_loading:", score_loading, "time:", episode_time, "powerflow time:",
+        print("episode:", n_epi,  "score:", score, "score v:", score_v, "score loading:", score_loading, "score pv:", score_pv, "time:", episode_time, "powerflow time:",
               powerflow_time, "train time:", train_time)
 
     ############save result
@@ -644,19 +683,17 @@ def main(i_seed):
     score_v_save_pd.to_excel(path_saving / f"score_v_{i_seed}.xlsx", startcol=0)
     score_loading_save_pd = pandas.DataFrame(score_loading_save)
     score_loading_save_pd.to_excel(path_saving / f"score_loading_{i_seed}.xlsx", startcol=0)
-    p_save_pd = pandas.DataFrame(p_save)
-    p_save_pd.to_excel(path_saving / f"storage_p_{i_seed}.xlsx", startcol=0)
-    q_save_pd = pandas.DataFrame(q_save)
-    q_save_pd.to_excel(path_saving / f"storage_q_{i_seed}.xlsx", startcol=0)
+    score_pv_save_pd = pandas.DataFrame(score_pv_save)
+    score_pv_save_pd.to_excel(path_saving / f"score_pv_{i_seed}.xlsx", startcol=0)
+    p_ess_save_pd = pandas.DataFrame(p_ess_save)
+    p_ess_save_pd.to_excel(path_saving / f"storage_p_{i_seed}.xlsx", startcol=0)
+    q_ess_save_pd = pandas.DataFrame(q_ess_save)
+    q_ess_save_pd.to_excel(path_saving / f"storage_q_{i_seed}.xlsx", startcol=0)
+    p_pv_save_pd = pandas.DataFrame(p_pv_save)
+    p_pv_save_pd.to_excel(path_saving / f"pv_p_{i_seed}.xlsx", startcol=0)
+    q_pv_save_pd = pandas.DataFrame(q_pv_save)
+    q_pv_save_pd.to_excel(path_saving / f"pv_q_{i_seed}.xlsx", startcol=0)
 
 
 if __name__ == '__main__':
-    """
-    pool = multiprocessing.Pool(processes=5)
-    for i_seed in seed_list:
-        pool.apply_async(main, (i_seed,))
-
-    pool.close()
-    pool.join()
-    """
     main(1)
