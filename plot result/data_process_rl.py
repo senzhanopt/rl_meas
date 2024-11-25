@@ -5,8 +5,6 @@ n_week = 4
 n_week_train = 3
 n_day = 7
 n_quarter = 96
-n_itr = 1
-itr_length = 0.25 / n_itr
 n_agent = n_storage
 n_load = load_p.shape[1]
 # diats
@@ -16,7 +14,7 @@ week_diats = [i for i in range(n_week)]
 week_train_diats = week_diats[0:3]  # [0, 1, 2]
 week_test_diats = week_diats[-1]  # [3]
 # action and state
-act_dim = 2*n_storage + 2*n_pv  # p and q of storage and pv
+act_dim = 2*n_storage  # p and q of storage
 s_dim = n_storage + n_pv + 2*n_load + (n_bus-1) + 1  # SoC, p_PV, p_load, q_load, V, loading
 
 
