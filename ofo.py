@@ -196,11 +196,11 @@ for itr in tqdm(range(n_timesteps * n_itr)):
 
 # visualization
 for b in list_bus_visual:
-    plt.plot(mat_v[:1440,b-1], label = f'bus {b}')
+    plt.plot(mat_v[:,b-1], label = f'bus {b}')
 plt.legend()
 plt.show()    
 
-plt.plot(mat_loading[:1440], label = "trafo")
+plt.plot(mat_loading[:], label = "trafo")
 plt.legend()
 plt.show()
 
@@ -216,7 +216,7 @@ plt.show()
 
 
 for i in range(4):
-    plt.plot(mat_soc_storage[:1440,i], label = f'storage {b}')
+    plt.plot(mat_soc_storage[:,i], label = f'storage {b}')
 plt.legend()
 plt.show()
 
