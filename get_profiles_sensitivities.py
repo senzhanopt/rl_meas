@@ -1,6 +1,6 @@
 from data_process import *
 
-# power flow with default storage profiles
+# power flow with zero storage profiles
 vm = np.ones(((end-start)*96, n_bus-1))
 loading_trafo = np.zeros((end-start)*96)
 for t in range(96*(end-start)):
