@@ -7,6 +7,8 @@ plt.style.use(['science', 'nature'])
 import copy
 from power_grid_model_io.converters import PandaPowerConverter
 from power_grid_model import ComponentType, DatasetType, initialize_array, PowerGridModel
+import warnings
+warnings.filterwarnings('ignore')
 
 # simulation parameters
 start, end = 224, 252
@@ -48,7 +50,7 @@ storage_p = sb.get_absolute_profiles_from_relative_profiles(net, 'storage', 'sn_
 
 # use pgm
 net_pgm = copy.deepcopy(net)
-net_pgm["storage"] = net_pgm["storage"].iloc[:0] #DELATE STORAGE
+net_pgm["storage"] = net_pgm["storage"].iloc[:0] #DELETE STORAGE
 for i in range(n_storage):
     pp.create_load(net_pgm, bus = net.storage.bus[i], p_mw = 0.0, q_mvar = 0.0)
 converter = PandaPowerConverter()
