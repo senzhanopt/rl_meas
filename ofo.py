@@ -6,14 +6,13 @@ import copy
 
 ## parameters
 beta = 1e5
-rho = 1e4
+rho = 1e2
 alpha = 0.5
 xi = 0.1
 epsilon = 1E-2
-n_itr = 15
 start_ofo, end_ofo = 21*96, 28*96
-pv_control = False
-lr = False
+pv_control = True
+lr = True
 pf = 'pgm'
 n_timesteps = end_ofo-start_ofo
 load_p = load_p[start_ofo:end_ofo,:]
@@ -23,11 +22,13 @@ sgen_p = sgen_p[start_ofo:end_ofo,:]
 if lr:
     mat_R_storage = pd.read_csv('mat_R_storage_lr.csv', index_col = 0).to_numpy()
     mat_X_storage = pd.read_csv('mat_X_storage_lr.csv', index_col = 0).to_numpy()
+    mat_R_pv = pd.read_csv('mat_R_pv_lr.csv', index_col = 0).to_numpy()
+    mat_X_pv = pd.read_csv('mat_X_pv_lr.csv', index_col = 0).to_numpy()
 else:
     mat_R_storage = pd.read_csv('mat_R_storage.csv', index_col = 0).to_numpy()
     mat_X_storage = pd.read_csv('mat_X_storage.csv', index_col = 0).to_numpy()
-mat_R_pv = pd.read_csv('mat_R_pv.csv', index_col = 0).to_numpy()
-mat_X_pv = pd.read_csv('mat_X_pv.csv', index_col = 0).to_numpy()
+    mat_R_pv = pd.read_csv('mat_R_pv.csv', index_col = 0).to_numpy()
+    mat_X_pv = pd.read_csv('mat_X_pv.csv', index_col = 0).to_numpy()
 
 
 def projection_pv(P, S, p, q):
@@ -182,7 +183,7 @@ for itr in tqdm(range(n_timesteps * n_itr)):
         for i in range(n_pv):
             p_pv[i], q_pv[i] = projection_pv(sgen_p_current[i], S_pv[i], p_pv[i], q_pv[i])
     
-    grad_p_storage = epsilon * net.storage.max_e_mwh.to_numpy()*1E3 * (soc-soc_init) + mat_R_storage.T @ (lambdas - gamma) + pi*pf_trafo/S_trafo*np.ones(n_storage)
+    grad_p_storage = epsilon * E_storage * (soc-soc_init) + mat_R_storage.T @ (lambdas - gamma) + pi*pf_trafo/S_trafo*np.ones(n_storage)
     grad_q_storage = q_storage + mat_X_storage.T @ (lambdas - gamma) + pi*rpf_trafo/S_trafo*np.ones(n_storage)
     p_storage -= alpha * grad_p_storage
     q_storage -= alpha * grad_q_storage
@@ -195,28 +196,29 @@ for itr in tqdm(range(n_timesteps * n_itr)):
         
 
 # visualization
+end_step = 2880
 for b in list_bus_visual:
-    plt.plot(mat_v[:,b-1], label = f'bus {b}')
+    plt.plot(mat_v[:end_step,b-1], label = f'bus {b}')
 plt.legend()
 plt.show()    
 
-plt.plot(mat_loading[:], label = "trafo")
+plt.plot(mat_loading[:end_step], label = "trafo")
 plt.legend()
 plt.show()
 
 for i in range(4):
-    plt.plot(mat_p_pv[:,i], label = f'pv {b}')
+    plt.plot(mat_p_pv[:end_step,i], label = f'pv {b}')
 plt.legend()
 plt.show()    
 
 for i in range(4):
-    plt.plot(mat_p_storage[:,i], label = f'storage {b}')
+    plt.plot(mat_p_storage[:end_step,i], label = f'storage {b}')
 plt.legend()
 plt.show()    
 
 
 for i in range(4):
-    plt.plot(mat_soc_storage[:,i], label = f'storage {b}')
+    plt.plot(mat_soc_storage[:end_step,i], label = f'storage {b}')
 plt.legend()
 plt.show()
 
