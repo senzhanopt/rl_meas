@@ -1,5 +1,7 @@
 from data_process import *
 
+net.ext_grid.bus = 63
+
 # power flow with zero storage profiles
 vm = np.ones(((end-start)*96, n_bus-1))
 loading_trafo = np.zeros((end-start)*96)
@@ -43,32 +45,32 @@ v_base = net.res_bus.vm_pu.to_numpy()[1:]
 
 
 for b in range(n_storage):
-    net.storage.loc[b, 'p_mw'] = 1E-3
+    net.storage.loc[b, 'p_mw'] = 1E-1
     pp.runpp(net)
     v_current = net.res_bus.vm_pu.to_numpy()[1:]
-    mat_R_storage[:,b] = v_current - v_base
+    mat_R_storage[:,b] = (v_current - v_base)/1e2
     net.storage.loc[b, 'p_mw'] = 0.0 # recover the base case
 
 for b in range(n_storage):
-    net.storage.loc[b, 'q_mvar'] = 1E-3
+    net.storage.loc[b, 'q_mvar'] = 1E-1
     pp.runpp(net)
     v_current = net.res_bus.vm_pu.to_numpy()[1:]
-    mat_X_storage[:,b] = v_current - v_base
+    mat_X_storage[:,b] = (v_current - v_base)/1e2
     net.storage.loc[b, 'q_mvar'] = 0.0 # recover the base case
 
 for b in range(n_pv):
-    net.sgen.loc[b, 'p_mw'] += 1E-3
+    net.sgen.loc[b, 'p_mw'] += 1E-1
     pp.runpp(net)
     v_current = net.res_bus.vm_pu.to_numpy()[1:]
-    mat_R_pv[:,b] = v_current - v_base
-    net.sgen.loc[b, 'p_mw'] -= 1E-3 # recover the base case
+    mat_R_pv[:,b] = (v_current - v_base)/1e2
+    net.sgen.loc[b, 'p_mw'] -= 1E-1 # recover the base case
 
 for b in range(n_pv):
-    net.sgen.loc[b, 'q_mvar'] += 1E-3
+    net.sgen.loc[b, 'q_mvar'] += 1E-1
     pp.runpp(net)
     v_current = net.res_bus.vm_pu.to_numpy()[1:]
-    mat_X_pv[:,b] = v_current - v_base
-    net.sgen.loc[b, 'q_mvar'] -= 1E-3 # recover the base case
+    mat_X_pv[:,b] = (v_current - v_base)/1e2
+    net.sgen.loc[b, 'q_mvar'] -= 1E-1 # recover the base case
 
 
 pd.DataFrame(mat_R_storage).to_csv('mat_R_storage.csv')
