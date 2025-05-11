@@ -74,4 +74,31 @@ def powerflow(p_load, q_load, p_sgen, q_sgen, p_storage, q_storage):
     dict_return["loading"] = output_data['transformer']['loading'][0]
     dict_return["P_trafo"] = output_data['transformer']['p_from']*1E-3
     dict_return["Q_trafo"] = output_data['transformer']['q_from']*1E-3
+    dict_return["p_net"] = output_data['node']['p']*1E-3
+    dict_return["q_net"] = output_data['node']['q']*1E-3
     return dict_return
+
+if False:
+    # power flow with zero storage profiles
+    vm = np.ones(((end-start)*96, n_bus-1))
+    loading_trafo = np.zeros((end-start)*96)
+    for t in range(96*(end-start)):
+        net.load.p_mw = load_p[t,:] * 1E-3
+        net.load.q_mvar = load_q[t,:] * 1E-3
+        net.sgen.p_mw = sgen_p[t,:] * 1E-3
+        net.sgen.q_mvar = 0.0
+        net.storage.p_mw = 0.0 # storage_p[t,:] * 1E-3
+        net.storage.q_mvar = 0.0
+        pp.runpp(net)
+        vm[t,:] = net.res_bus.vm_pu.to_numpy()[1:]
+        loading_trafo[t] = net.res_trafo.loading_percent[0]
+    
+    
+    for b in list_bus_visual:
+        plt.plot(vm[:,b-1], label = f'bus {b}')
+    plt.legend()
+    plt.show()
+        
+    plt.plot(loading_trafo, label = "MV/LV transformer")
+    plt.legend()
+    plt.show()
