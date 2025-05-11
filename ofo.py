@@ -212,18 +212,18 @@ def main(epsilon=0.5, e=0.2, w2 = 0.0):
         plt.show()
         
         for i in range(4):
-            plt.plot(mat_p_pv[:end_step,i], label = f'pv {b}')
+            plt.plot(mat_p_pv[:end_step,i], label = f'pv {i}')
         plt.legend()
         plt.show()    
         
         for i in range(4):
-            plt.plot(mat_p_storage[:end_step,i], label = f'storage {b}')
+            plt.plot(mat_p_storage[:end_step,i], label = f'storage {i}')
         plt.legend()
         plt.show()    
         
         
         for i in range(4):
-            plt.plot(mat_soc_storage[:end_step,i], label = f'storage {b}')
+            plt.plot(mat_soc_storage[:end_step,i], label = f'storage {i}')
         plt.legend()
         plt.show()
         
